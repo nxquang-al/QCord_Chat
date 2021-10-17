@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>QCord - Local chat</title>
+
+	<link rel="stylesheet" href="css/style.css" type="text/css" />
+	<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+</head>
+<script src="/socket.io/socket.io.js"></script>
+
+
+<body>
+	<!-- Header section -->
+	<div id="header-section" class="left-side-bar">
+		<img src="image/caphesuada.png" alt="QCord" class="qcord-avatar mt-16">
+		<h1 class="header-title text-white mt-16 mb-8">QCORD</h1>
+		<p class="header-desc text-white">
+			Local chat for friends
+		</p>
+	</div>
+
+	<!-- Rooms list section -->
+	<div id="room-section"></div>
+
+	<!-- Member section -->
+	<div id="member-section" class="left-side-bar">
+		<p class="member-heading text-white pad-tb-16 pad-lr-8">
+			#room_01 | Member:
+			<span class="member-count">1</span>
+		</p>
+
+		<ul id="member-list"></ul>
+	</div>
+
+	<!-- Chat section -->
+	<div id="chat-section">
+		<div class="chat-display">
+			<ul id="messages" class="text-white mt-32"></ul>
+		</div>
+
+		<form action="" id="chat-form" class="pad-tb-32">
+			<input type="text" id="chat-mes" class="text-white" placeholder="Enter a message">
+			<button id="chat-send" type="submit" class="text-white">Send</button>
+		</form>
+	</div>
+
+</body>
+
+<script>
+	const SPAM_THRESHOLD = 0.75;
+	var lastUser = "";
+	var colorIndex;
+	const socket = io();
+	const tokenizer_url =
+		"https://raw.githubusercontent.com/nxquang2002/QCord_chat_app-with_spam_detection/master/tokenizer.json";
+
+	async function loadTokenizer() {
+		var response = await fetch(tokenizer_url)
+		var json = await response.json();
+		return json;
+	}
+
+	/* Mnaipulate text by removing all punctuation and transfering all characters to lowercase */
+	function text_to_arr(text) {
+		var rep = text.replace(/['!"#$%&\\'()\*+,\-\.\/:;<=>?@\[\\\]\^_`{|}~']/g, " ");
+		var token = rep.toLowerCase().split(" ");
+		var res = token.filter((value) => {
+			return value != '';
+		})
+		return res;
+	}
+
+	/* Ordinal encode text*/
+	function word2Index(arr, tokenizer) {
+		let seq = [];
+		arr.forEach(elm => {
+			if (tokenizer[elm] != undefined) {
+				seq.push(tokenizer[elm]);
+			}
+		});
+		return seq;
+	}
+	function pad_sequences(seq, maxlen = 12) {
+		let seq_padded = [];
+		if (seq.length < maxlen) {
+			seq_padded = seq_padded.concat(seq);
+			let pad = maxlen - seq.length;
+			for (let i = 0; i < pad; i++) {
+				seq_padded.push(0);
+			}
+		}
+		else {
+			const start = seq.length - maxlen;
+			for (let i = start; i < seq.length; ++i) {
+				seq_padded.push(seq[i]);
+			}
+		}
+		return seq_padded;
+	}
+	/* Load Tokenizer (vocabs) and transfer text to tf.tensor */
+	var wordIndex = undefined;
+	async function text_to_sequence(text) {
+		if (wordIndex === undefined) {
+			try {
+				wordIndex = await loadTokenizer();
+			}
+			catch {
+				console.log("Error in loading Tokenizer!");
+			}
+		}
+		var arr = text_to_arr(text);
+		var arr_encoded = word2Index(arr, wordIndex);
+		var arr_padded = pad_sequences(arr_encoded, 12);
+		return tf.tensor([arr_padded]);
+	}
+
+	const colors = [
+		"rgb(46, 204, 113)",	/* Green */
+		"rgb(241, 196, 15)",	/* Yellow */
+		"rgb(233, 30, 99)",		/* Red */
+		"rgb(52, 152, 219)"		/* Blue */
+	];
+	const imagePath = 'image/';
+	const avatars = [
+		"green_1.png",
+		"yellow_1.png",
+		"red_1.png",
+		"blue_1.png"
+	];
+
+
+	function getRandomInt(max) {
+		return Math.floor(Math.random() * max);
+	}
+	const userName = prompt("Enter your name: ");
+	/*NEW MEMBER COME IN REQUEST*/
+	if (userName) {
+		colorIndex = getRandomInt(4);
+		socket.emit("new-member", {
+			user: userName,
+			color: colorIndex,
+		})
+	}
+
+	const chatForm = document.getElementById("chat-form");
+	const chatMes = document.getElementById("chat-mes");
+	chatForm.addEventListener("submit", async (event) => {
+		event.preventDefault();
+		/* NEW MESSAGE RESQUEST */
+		if (chatMes.value) {
+			let detectSpam = await loadModelAndPredict(chatMes.value);
+			chatMes.value = "";
+		}
+	});
+
+	/* Get message's time format */
+	function formatAMPM(date) {
+		var hours = date.getHours();
+		var minutes = date.getMinutes();
+		var ampm = hours >= 12 ? 'PM' : 'AM';
+		hours = hours % 12;
+		hours = hours < 10 ? '0' + hours : hours;
+		minutes = minutes < 10 ? '0' + minutes : minutes;
+		var strTime = hours + ':' + minutes + ' ' + ampm;
+		return strTime;
+	}
+
+	/*NEW MESSAGE RESPONSE*/
+	const messagesList = document.getElementById("messages");
+	socket.on("user-chat", (data) => {
+		/* Time */
+		const messageTime = formatAMPM(new Date);
+		/* li */
+		const messageItem = document.createElement('li');
+		if (lastUser === data.user) {
+			messageItem.classList.add('sub-message');
+			messageItem.innerHTML = `<span class="message-time">${messageTime}</span> <div class="message-body">${data.message}</div>`;
+		}
+		else {
+			/* Avatar */
+			const avatar = document.createElement("img");
+			avatar.classList.add("user-avatar")
+			avatar.classList.add("mt-4");
+			avatar.classList.add("ml-32");
+			avatar.src = imagePath + avatars[data.color];
+
+			messageItem.innerHTML = `<span class="message-username">${data.user}</span><span class="message-time"> ${messageTime}</span>
+									<br><div class="message-body">${data.message}</div>`;
+			messageItem.appendChild(avatar);
+			/* Change username color */
+			messageItem.querySelector(".message-username").style.color = colors[data.color];
+			messageItem.classList.add("mt-12");
+			lastUser = data.user;
+		}
+		if (data.spam == true) {
+			/* If spam, change the message's color to red */
+			messageItem.querySelector(".message-body").classList.add("spam-message");
+		}
+		messagesList.appendChild(messageItem);
+	})
+
+	/* NEW MEMBER JOIN RESPONSE */
+	const membersList = document.getElementById("member-list");
+	const memberCount = document.querySelector(".member-count");
+	socket.on("user-member", (data) => {
+		const memberItem = document.createElement('li');
+		const avatar = document.createElement("img");
+		avatar.classList.add("user-avatar");
+		avatar.classList.add("mt-4");
+		avatar.src = imagePath + avatars[data.color];
+		memberItem.innerHTML = `<span>${data.user}</span>`;
+		memberItem.style.color = colors[data.color];
+		memberItem.append(avatar);
+		if (data.user == userName) {
+			memberItem.classList.add("text-bold");
+		}
+		membersList.appendChild(memberItem);
+		memberCount.textContent = document.querySelectorAll("#member-list li").length;
+	})
+
+	var model = undefined;
+	async function loadModelAndPredict(text) {
+		if (model === undefined) {
+			model = await tf.loadLayersModel("https://raw.githubusercontent.com/nxquang2002/QCord_chat_app-with_spam_detection/master/model.json");
+		}
+		var inputTensor = await text_to_sequence(text);
+		var result = await model.predict(inputTensor);
+		result.data().then((dataArray) => {
+			if (dataArray[0] > SPAM_THRESHOLD) {
+				console.log("SPAM!");
+				socket.emit("new-chat", {
+					user: userName,
+					message: "< Message is hidden because spam is detected! >",
+					color: colorIndex,
+					spam: true,
+				})
+			}
+			else {
+				console.log("HAM!");
+				socket.emit("new-chat", {
+					user: userName,
+					message: text,
+					color: colorIndex,
+					spam: false,
+				})
+			}
+		})
+	}
+</script>
+
+</html>
