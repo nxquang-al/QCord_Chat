@@ -4,4 +4,4 @@
 - I have embeded a neural net model in order to detect and prevent spam messages.
 
 ### Demo
-![Demo_3](https://user-images.githubusercontent.com/79528257/143523047-0269af83-b032-4a4c-a636-8368a0d8ae3b.png)
+![Demo](https://user-images.githubusercontent.com/79528257/143523400-fabbcbea-5e04-46ea-8f63-d8fbd7458974.png)
